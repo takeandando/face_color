@@ -1,1 +1,79 @@
-index
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Facial Color Experiment</title>
+  <script src="jspsych/jspsych.js"></script>
+  <script src="jspsych/plugins/jspsych-html-keyboard-response.js"></script>
+  <script src="jspsych/plugins/jspsych-image-keyboard-response.js"></script>
+  <link href="jspsych/jspsych.css" rel="stylesheet" type="text/css">
+</head>
+<body></body>
+
+<script>
+  const jsPsych = initJsPsych({
+    on_finish: function() {
+      jsPsych.data.displayData();
+    }
+  });
+
+  // === 刺激画像のパス生成 ===
+  const models = ["model1", "model2", "model3", "model4"];
+  const expressions = Array.from({length: 19}, (_, i) => `img${i + 1}.jpg`);
+  const colors = ["red", "yellow", "blue", "black", "white"]; // 色調5種
+
+  // === 全試行リストを作成 ===
+  let trials = [];
+  for (let model of models) {
+    for (let img of expressions) {
+      for (let color of colors) {
+        trials.push({
+          stimulus: `images/${model}/${color}_${img}`,
+          model: model,
+          expression: img,
+          color: color
+        });
+      }
+    }
+  }
+
+  // === シャッフル＆4ブロック分割 ===
+  trials = jsPsych.randomization.shuffle(trials);
+  const blocks = jsPsych.randomization.split(trials, 4);
+
+  // === ブロック構築 ===
+  let timeline = [];
+
+  for (let i = 0; i < blocks.length; i++) {
+    timeline.push({
+      type: jsPsych.htmlKeyboardResponse,
+      stimulus: `<p>第${i+1}ブロックを始めます。スペースキーを押してください。</p>`,
+      choices: [" "]
+    });
+
+    blocks[i].forEach(trial => {
+      timeline.push({
+        type: jsPsych.imageKeyboardResponse,
+        stimulus: trial.stimulus,
+        choices: ["f", "j"],  // 例：「f」＝怒り、「j」＝恐れ
+        prompt: "<p>怒りならFキー、恐れならJキーを押してください</p>",
+        trial_duration: 1000,
+        data: {
+          model: trial.model,
+          expression: trial.expression,
+          color: trial.color,
+          block: i + 1
+        }
+      });
+
+      timeline.push({
+        type: jsPsych.htmlKeyboardResponse,
+        stimulus: "<p>キーを押すと次へ進みます</p>",
+        choices: "ALL_KEYS"
+      });
+    });
+  }
+
+  jsPsych.run(timeline);
+</script>
+</html>
