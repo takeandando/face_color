@@ -3,27 +3,30 @@
 
   /* ========= 起動テスト用パラメータ ========= */
   const N_BLOCKS = 4;            // ブロック数
-  const REPEATS_PER_IMAGE = 2;   // 1ブロック内で各画像を何回出すか（5枚×2=10試行）
   const ISI_MS = 500;            // 刺激間ブランク(ms)
 
   /* ========= 刺激定義（実在する画像だけ） ========= */
-  const expressions = ["happy"];
-  const variants    = ["01"];
-  const genders     = ["F01"];
+  const expressions = ["happy","angry","sad","disgust","fear","surprise","neutral"];
+  const variants    = ["01","02","03"];
+  const genders     = ["F01","F02","M01","M02"];
   const imageBackgrounds = ["black","blue","red","white","yellow"];
   const EXT = "png";
   const USE_GENDER_SUBFOLDER = true;
 
-  // 参加者ID（URL ?pid= などが無ければ手入力）
-　const PID = `p_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
-
+  // 参加者ID（乱数）
+  const PID = `p_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
   const EXP_START_ISO = new Date().toISOString();
 
   // 画像リスト（オブジェクトで保持）
+ /* ========= 画像リスト生成 ========= */
   const baseImages = [];
+
   genders.forEach(g => {
     expressions.forEach(expr => {
-      variants.forEach(v => {
+      // neutralだけ variant01のみ
+      const variantsForThisExpr = (expr === "neutral") ? ["01"] : variants;
+
+      variantsForThisExpr.forEach(v => {
         imageBackgrounds.forEach(bg => {
           baseImages.push({
             src: USE_GENDER_SUBFOLDER
@@ -39,27 +42,26 @@
     });
   });
 
-  // デバッグ（必要なら残す）
-  console.log('[DEBUG] baseImages length:', baseImages.length);
+  console.log('[DEBUG] baseImages length:', baseImages.length); // ← 期待380
   console.log('[DEBUG] sample image path:', baseImages[0]?.src);
-  console.log('[DEBUG] all image paths:', baseImages.map(s => s.src));
 
   /* ========= jsPsych 初期化 ========= */
   const jsPsych = initJsPsych({
-    override_safe_mode: true, // file:// でも動くように（Live Server推奨）
+    override_safe_mode: true, // Qualtrics外のローカル検証用。Qualtricsでは不要でも可
     on_finish: () => {
       jsPsych.data.addProperties({ exp_end_iso: new Date().toISOString() });
-      jsPsych.data.displayData(); // 結果表示（CSV保存したい場合は下の行を使う）
+      jsPsych.data.displayData(); // Qualtrics本番では埋め込み保存に置き換える
       // jsPsych.data.get().localSave('csv', `data_${PID}_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`);
     }
   });
   jsPsych.data.addProperties({ participant_id: PID, exp_start_iso: EXP_START_ISO });
 
   /* ========= プリロード ========= */
+  // 一括プリロード（360枚）。重い場合はブロックごとプリロードへ切替を検討
   const preload = {
     type: jsPsychPreload,
     auto_preload: false,
-    images: baseImages.map(s => s.src) // 文字列の配列
+    images: baseImages.map(s => s.src)
   };
 
   /* ========= 共通UI ========= */
@@ -89,7 +91,7 @@
     fear: "4",
     surprise: "5",
     happy: "6",
-    neutral: "7"
+    neutral: "7" // neutral は今回の expressions には含めていないので未使用でもOK
   };
 
   /* ========= タイムライン ========= */
@@ -121,6 +123,7 @@
             <li>条件①：使用ブラウザはGoogle Chromeにしてください。</li>
             <li>条件②：フルスクリーン表示が推奨になります。フルスクリーン表示にしてください。</li>
             <li>条件③：普段メガネやコンタクトを使用している方は、そのまま着用してください。強い色覚異常がある場合、結果に影響する可能性があります。</li>
+          </ul>
           <div style="margin-top:20px;text-align:center;color:#666;font-size:14px;">
             何かキーを押すと開始します
           </div>
@@ -128,48 +131,52 @@
       </div>`
   });
 
-// === ループの外：共通の試行テンプレート ===
-const trial_template = {
-  timeline: [
-    isi_gray,
-    {
-      type: jsPsychHtmlKeyboardResponse,
-      // ここは関数にしない。事前に作った HTML をそのまま使う
-      stimulus: jsPsych.timelineVariable('html'),
-      choices: Object.keys(KEY_LABEL_MAP),
-      response_ends_trial: true,
-      data: {
-        gender:        jsPsych.timelineVariable('gender'),
-        expression:    jsPsych.timelineVariable('expression'),
-        variant:       jsPsych.timelineVariable('variant'),
-        image_bg:      jsPsych.timelineVariable('image_bg'),
-        stimulus:      jsPsych.timelineVariable('src'),
-        block:         jsPsych.timelineVariable('block'),
-        trial_in_block:jsPsych.timelineVariable('trial_in_block'),
-        correct_key:   jsPsych.timelineVariable('correct_key')
-      },
-      on_finish: (data) => {
-        const resp = data.response == null ? null : String(data.response);
-        data.choice_key   = resp;
-        data.choice_label = resp ? (KEY_LABEL_MAP[resp] || null) : null;
-        const ck = data.correct_key ? String(data.correct_key) : null;
-        data.correct_key   = ck;
-        data.correct_label = ck ? (KEY_LABEL_MAP[ck] || null) : null;
-        data.correct       = (resp != null && ck != null)
-                              ? jsPsych.pluginAPI.compareKeys(resp, ck)
-                              : false;
+  // 360枚を一度だけシャッフル → 90枚×4ブロック（重複なし）
+  const shuffled = jsPsych.randomization.shuffle(baseImages.slice());
+  const CHUNK = 90;
+
+  // === ループの外：共通の試行テンプレート ===
+  const trial_template = {
+    timeline: [
+      isi_gray,
+      {
+        type: jsPsychHtmlKeyboardResponse,
+        stimulus: jsPsych.timelineVariable('html'),
+        choices: Object.keys(KEY_LABEL_MAP),
+        response_ends_trial: true,
+        data: {
+          gender:        jsPsych.timelineVariable('gender'),
+          expression:    jsPsych.timelineVariable('expression'),
+          variant:       jsPsych.timelineVariable('variant'),
+          image_bg:      jsPsych.timelineVariable('image_bg'),
+          stimulus:      jsPsych.timelineVariable('src'),
+          block:         jsPsych.timelineVariable('block'),
+          trial_in_block:jsPsych.timelineVariable('trial_in_block'),
+          correct_key:   jsPsych.timelineVariable('correct_key')
+        },
+        on_finish: (data) => {
+          const resp = data.response == null ? null : String(data.response);
+          data.choice_key   = resp;
+          data.choice_label = resp ? (KEY_LABEL_MAP[resp] || null) : null;
+          const ck = data.correct_key ? String(data.correct_key) : null;
+          data.correct_key   = ck;
+          data.correct_label = ck ? (KEY_LABEL_MAP[ck] || null) : null;
+          data.correct       = (resp != null && ck != null)
+                                ? jsPsych.pluginAPI.compareKeys(resp, ck)
+                                : false;
+        }
       }
-    }
-  ]
-};
+    ]
+  };
 
   // ブロック
   for (let b = 0; b < N_BLOCKS; b++) {
+    const start = b * CHUNK;
+    const end   = start + CHUNK;
+    const blockSlice = shuffled.slice(start, end); // このブロックの90枚
 
-    // ブロック内の刺激（5枚×REPEATS_PER_IMAGE）
-    let blockSlice = [];
-    for (let r = 0; r < REPEATS_PER_IMAGE; r++) blockSlice = blockSlice.concat(baseImages);
-    blockSlice = jsPsych.randomization.shuffle(blockSlice);
+    // （重くなる場合は一括プリロードの代わりにこちらを使う）
+    // timeline.push({ type: jsPsychPreload, auto_preload: false, images: blockSlice.map(s => s.src) });
 
     // ブロック開始案内
     timeline.push({
@@ -188,33 +195,33 @@ const trial_template = {
     });
 
     const tvars = blockSlice.map((s, i) => ({
-     src: String(s.src),
-     gender: s.gender || null,
-     expression: s.expression,
-     variant: s.variant,
-     image_bg: s.image_bg,
-     block: b + 1,
-     trial_in_block: i + 1,
-     correct_key: EXP_TO_KEY[s.expression] || null,
-     html: `
-       <div style="width:100vw;height:100vh;background:rgb(128,128,128);">
-       <div class="stimulus-center">
-         <img src="${s.src}" alt="stimulus"
-             onerror="console.error('IMG-ERROR cannot load:', this.src)" />
-       </div>
-       </div>
-       <div class="key-help"><div>
-        1=怒り・2=悲しみ・3=嫌悪・4=恐れ・5=驚き・6=喜び・7=無表情
-       </div></div>
-  `
-}));
-console.log('[DEBUG] example tvars item:', tvars[0]);
+      src: String(s.src),
+      gender: s.gender || null,
+      expression: s.expression,
+      variant: s.variant,
+      image_bg: s.image_bg,
+      block: b + 1,
+      trial_in_block: i + 1,
+      correct_key: EXP_TO_KEY[s.expression] || null,
+      html: `
+        <div style="width:100vw;height:100vh;background:rgb(128,128,128);">
+          <div class="stimulus-center">
+            <img src="${s.src}" alt="stimulus"
+                onerror="console.error('IMG-ERROR cannot load:', this.src)" />
+          </div>
+        </div>
+        <div class="key-help"><div>
+          1=怒り・2=悲しみ・3=嫌悪・4=恐れ・5=驚き・6=喜び・7=無表情
+        </div></div>
+      `
+    }));
+    console.log('[DEBUG] example tvars item:', tvars[0]);
 
-timeline.push({
-  timeline: [trial_template],
-  timeline_variables: tvars,
-  randomize_order: false
-});
+    timeline.push({
+      timeline: [trial_template],
+      timeline_variables: tvars,
+      randomize_order: false
+    });
 
     // ブロック間休憩
     if (b < N_BLOCKS - 1) {
